@@ -93,12 +93,29 @@ class Engine:
     def derive(self) -> DeriveClient:
         if self._derive is None:
             d = self.cfg.derive
-            self._derive = DeriveClient(d.environment, self.wallet, d.derive_wallet, d.subaccount_id,
-                                        dry_run=self.cfg.engine.dry_run, log=self.log)
+            owner = d.derive_wallet or (self.wallet.address if d.api_version == "v3" else "")
+            self._derive = DeriveClient.from_settings(d.api_version, d.environment, self.wallet, owner or "",
+                                                      d.subaccount_id, dry_run=self.cfg.engine.dry_run, log=self.log)
         return self._derive
 
     def derive_configured(self) -> bool:
-        return bool(self.cfg.derive.derive_wallet) and self.cfg.derive.subaccount_id > 0
+        d = self.cfg.derive
+        if d.api_version == "v3":
+            return True            # the hot wallet is the owner; subaccount can be discovered
+        return bool(d.derive_wallet)
+
+    def ensure_subaccount(self) -> bool:
+        """Discover and persist a subaccount id when none is configured."""
+        if self.cfg.derive.subaccount_id > 0:
+            return True
+        sid = self.derive.discover_subaccount()
+        if sid is None:
+            return False
+        self.cfg.derive.subaccount_id = sid
+        self.cfg.save()
+        self.derive.subaccount_id = sid
+        self.log("info", f"using Derive subaccount {sid}")
+        return True
 
     # ---- lifecycle ----------------------------------------------------------------
     @property
@@ -255,6 +272,13 @@ class Engine:
             pass  # the hedge step runs on every tick anyway
         elif job == "close_hedges":
             self._close_all_hedges()
+        elif job == "deposit_derive":
+            amt = float(params.get("amount") or 0)
+            if amt <= 0:
+                raise RuntimeError("deposit amount must be positive")
+            res = self.derive.deposit_collateral(amt, self.cfg.derive.settlement_rpc_url, self.cfg.derive.currency)
+            self.log("info", f"Derive deposit submitted ({res['manager']['margin_type']} manager "
+                             f"{res['manager']['manager_id']}); crediting takes a few minutes")
         else:
             self.log("warn", f"unknown job {job}")
 
@@ -324,7 +348,11 @@ class Engine:
         if not self.derive_configured():
             out["note"] = "Derive not configured"
             return out
+        out["api"] = self.derive.p.key
         try:
+            if not self.ensure_subaccount():
+                out["note"] = "No Derive subaccount yet: deposit collateral first"
+                return out
             sub = self.derive.get_subaccount()
             out["connected"] = True
             out["collateral_usd"] = self.derive.collateral_usd(sub)
@@ -340,10 +368,11 @@ class Engine:
             out["note"] = "hedging disabled"
             return out
         instruments = self.derive.get_instruments(self.cfg.derive.currency)
+        by_name = {i.name: i for i in instruments}
         tickers: dict[str, Ticker] = {}
         target, action = decide(lp, price, lp_value, positions, instruments, tickers, s)
         if action.kind == "need_ticker" and action.instrument_name:
-            tickers[action.instrument_name] = self.derive.get_ticker(action.instrument_name)
+            tickers[action.instrument_name] = self.derive.get_ticker(by_name.get(action.instrument_name, action.instrument_name))
             target, action = decide(lp, price, lp_value, positions, instruments, tickers, s)
         if target:
             out.update({"target_contracts": target.contracts, "strike_target": target.strike_target,

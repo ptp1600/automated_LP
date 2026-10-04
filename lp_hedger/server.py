@@ -109,13 +109,20 @@ def engine_stop():
     return {"running": engine.running}
 
 
+class JobReq(BaseModel):
+    amount: Optional[float] = None
+
+
 @app.post("/api/jobs/{job}")
-def enqueue(job: str):
-    if job not in {"open_lp", "close_lp", "collect_fees", "rebalance", "hedge_now", "close_hedges"}:
+def enqueue(job: str, req: Optional[JobReq] = None):
+    if job not in {"open_lp", "close_lp", "collect_fees", "rebalance", "hedge_now", "close_hedges", "deposit_derive"}:
         raise HTTPException(404, "unknown job")
     if not engine.running:
         raise HTTPException(400, "Start the engine first")
-    engine.enqueue(job)
+    params = req.model_dump(exclude_none=True) if req else {}
+    if job == "deposit_derive" and not params.get("amount"):
+        raise HTTPException(400, "amount is required")
+    engine.enqueue(job, **params)
     return {"queued": job}
 
 
@@ -124,10 +131,14 @@ def derive_verify():
     if not wallet.unlocked:
         raise HTTPException(400, "Unlock the wallet first")
     if not engine.derive_configured():
-        raise HTTPException(400, "Fill in the Derive wallet address and subaccount ID first")
+        raise HTTPException(400, "Fill in the Derive wallet address first (v2) or pick v3")
     engine.rebuild_clients()
     try:
+        if cfg.derive.subaccount_id == 0 and not engine.ensure_subaccount():
+            raise HTTPException(400, "This wallet has no Derive subaccount yet. Deposit collateral first.")
         return engine.derive.verify_connection()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(400, f"{e}")
 

@@ -41,10 +41,13 @@ class LPSettings:
 
 @dataclass
 class DeriveSettings:
+    api_version: str = "v2"            # v2 (live on mainnet today) | v3 (Ethereum L1; testnet now)
     environment: str = "mainnet"       # mainnet | testnet
-    derive_wallet: str = ""            # smart-contract wallet address shown on derive.xyz
-    subaccount_id: int = 0             # subaccount holding the USDC collateral
+    derive_wallet: str = ""            # v2: Derive smart-contract wallet address. v3: owner EOA
+                                       #     (leave empty to use the hot wallet itself)
+    subaccount_id: int = 0             # subaccount holding the USDC collateral (0 = auto-discover)
     currency: str = "ETH"
+    settlement_rpc_url: str = ""       # v3 only: Ethereum / Sepolia RPC for on-chain deposits
 
 
 @dataclass

@@ -47,11 +47,15 @@ Then in the UI:
 1. **Create the hot wallet** (or import a key). Copy its address.
 2. **Fund it** on Arbitrum or Base: a little ETH for gas plus the ETH + USDC you want to deploy.
    For a symmetric range you need roughly half the value in each asset.
-3. **Connect Derive**
-   - Go to [derive.xyz](https://www.derive.xyz), sign in and deposit USDC collateral.
-   - Open **Developers**, copy the **Derive wallet** address and the **subaccount ID** into Settings.
-   - Under **Session keys**, register the hot wallet address so it may sign orders.
-   - Click **Verify connection**.
+3. **Connect Derive** (pick the API generation in Settings → Derive account)
+   - **v2 — live on mainnet today.** Go to [derive.xyz](https://www.derive.xyz), sign in and deposit
+     USDC collateral. Open **Developers**, copy the **Derive wallet** address into Settings. Under
+     **Session keys**, register the hot wallet address so it may sign orders. Click **Verify
+     connection**; the subaccount ID is discovered automatically.
+   - **v3 — Ethereum L1, testnet now, mainnet on launch.** The hot wallet *is* the Derive account.
+     Fund it with USDC plus a little ETH for gas on the settlement chain, enter an RPC URL for that
+     chain, and click **Deposit to Derive**. The first deposit creates the subaccount (credited in a
+     couple of minutes). Click **Verify connection**.
 4. Review the **Settings**, click **Save**, press **Start**.
 5. Click **Open LP position**. The hedge is evaluated on every tick (default 60 s).
 6. When you are comfortable with the dry-run log, untick **Dry run**, save, and restart the engine.
@@ -74,7 +78,7 @@ Then in the UI:
 |---|---|
 | `lp_hedger/uniswap_math.py` | Pure v3 math: ticks ↔ prices, liquidity ↔ amounts, exposure at range bounds, mint planning. |
 | `lp_hedger/uniswap.py` | web3 client: pool lookup via factory, read position & pending fees, mint / remove / collect / swap. |
-| `lp_hedger/derive.py` | Derive v2 REST client with EIP-712 action signing (verified against the official `derive_action_signing` package). |
+| `lp_hedger/derive.py` | Derive REST client for both API generations (v2 on Derive Chain, v3 on Ethereum L1) with EIP-712 action signing, price-band clamping and v3 on-chain deposits. Signing is verified byte-for-byte against Derive's official signing package. |
 | `lp_hedger/strategy.py` | Hedge policy: target size, instrument selection, roll/trim decisions, scenario table. |
 | `lp_hedger/engine.py` | Background loop: refresh → run queued jobs → hedge step; dry-run aware; event log. |
 | `lp_hedger/server.py` | FastAPI app serving the UI and a small JSON API. |
@@ -98,8 +102,17 @@ against Derive's official signing package), config handling and the HTTP API.
 - Fund the hot wallet only with what you intend to deploy. Treat it like cash in a browser wallet.
 - The server binds to localhost. Do not expose it (`--host 0.0.0.0`) on a shared network.
 - Session keys on Derive can be scoped and given an expiry; prefer that over using the owner key.
-- Protocol constants (domain separator, trade module) are in `lp_hedger/derive.py`; check them
-  against Derive's "Protocol Constants" page if Derive upgrades its matching contracts.
+- Protocol constants (domain separators, trade module, action manager) are in `lp_hedger/derive.py`
+  and were taken from Derive's Contracts page and official SDKs. Re-check them if Derive redeploys.
+
+## Derive v2 vs v3
+
+Derive is moving from v2 (its own L2, "Derive Chain", smart-contract wallets, `api.lyra.finance`) to
+v3 (Ethereum L1 settlement with ZK proofs, plain EOA accounts, `api.derive.xyz/v3`). At the time of
+writing v3 runs on Sepolia testnet and mainnet has not launched, while v2 mainnet is live. LP Hedger
+speaks both: the client swaps base URL, auth header names (`X-Lyra*` vs `X-Derive*`), domain
+separator, nonce format (milliseconds vs nanoseconds) and the ticker shape (full vs slim) per
+profile. Switch with one setting when v3 mainnet goes live.
 
 ## Limitations / roadmap
 

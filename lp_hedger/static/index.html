@@ -92,17 +92,28 @@
         </fieldset>
         <fieldset>
           <legend>Derive account</legend>
+          <label>API generation <select name="derive.api_version" id="derive-version"><option value="v2">v2 — live on mainnet today</option><option value="v3">v3 — Ethereum L1 (testnet now)</option></select></label>
           <label>Environment <select name="derive.environment"><option value="mainnet">mainnet</option><option value="testnet">testnet</option></select></label>
-          <label>Derive wallet address <input name="derive.derive_wallet" placeholder="0x… (Derive → Developers)"></label>
-          <label>Subaccount ID <input name="derive.subaccount_id" type="number"></label>
+          <label id="lbl-derive-wallet">Derive wallet address <input name="derive.derive_wallet" placeholder="0x… (Derive → Developers)"></label>
+          <label>Subaccount ID <input name="derive.subaccount_id" type="number" placeholder="0 = discover automatically"></label>
+          <label class="v3-only">Settlement RPC URL (Ethereum / Sepolia) <input name="derive.settlement_rpc_url" placeholder="https://… for on-chain deposits"></label>
           <button type="button" class="btn" id="btn-verify-derive">Verify connection</button>
           <div id="derive-verify" class="small"></div>
-          <details class="small help"><summary>How to connect Derive</summary>
+          <div class="v3-only row"><label style="flex:1">Deposit USDC from hot wallet <input id="deposit-amount" type="number" step="1" placeholder="amount"></label><button type="button" class="btn" id="btn-deposit">Deposit to Derive</button></div>
+          <details class="small help v2-only"><summary>How to connect Derive (v2)</summary>
             <ol>
               <li>Open <a href="https://www.derive.xyz" target="_blank" rel="noopener">derive.xyz</a>, sign in and deposit USDC as collateral.</li>
               <li>Go to <b>Developers</b>. Copy the <b>Derive wallet</b> address and your <b>subaccount ID</b> into the fields above.</li>
               <li>Under <b>Session keys</b>, register this app's hot wallet address (shown top-left of the Wallet card) so it may sign orders.</li>
               <li>Click <b>Verify connection</b>.</li>
+            </ol>
+          </details>
+          <details class="small help v3-only"><summary>How to connect Derive (v3)</summary>
+            <ol>
+              <li>The hot wallet <b>is</b> your Derive account: leave the wallet address empty (or enter an owner wallet that registered this hot wallet as a session key).</li>
+              <li>Fund the hot wallet with USDC and a little ETH for gas on the settlement chain (Sepolia on testnet; Ethereum on mainnet once v3 launches).</li>
+              <li>Enter an RPC URL for that chain, save, start the engine, then use <b>Deposit to Derive</b>. The first deposit creates your subaccount; crediting takes a couple of minutes.</li>
+              <li>Click <b>Verify connection</b>; the subaccount ID fills in automatically.</li>
             </ol>
           </details>
         </fieldset>

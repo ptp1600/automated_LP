@@ -60,6 +60,14 @@ function fillPools() {
   $('[name="chain.rpc_url"]').placeholder = 'leave empty for ' + chain.default_rpc;
 }
 $('#chain-select').addEventListener('change', fillPools);
+function applyDeriveVersion() {
+  const v3 = $('#derive-version').value === 'v3';
+  document.querySelectorAll('.v3-only').forEach(el => el.classList.toggle('hidden', !v3));
+  document.querySelectorAll('.v2-only').forEach(el => el.classList.toggle('hidden', v3));
+  $('#lbl-derive-wallet').firstChild.textContent = v3 ? 'Owner wallet (optional; empty = hot wallet) ' : 'Derive wallet address ';
+  $('[name="derive.derive_wallet"]').placeholder = v3 ? 'leave empty unless using a session key' : '0x… (Derive → Developers)';
+}
+$('#derive-version').addEventListener('change', applyDeriveVersion);
 
 function loadSettingsForm() {
   const f = $('#settings');
@@ -71,7 +79,9 @@ function loadSettingsForm() {
   }
   fillChainSelects();
   $('[name="derive.environment"]').value = cfg.derive.environment;
+  $('[name="derive.api_version"]').value = cfg.derive.api_version || 'v2';
   $('[name="hedge.mode"]').value = cfg.hedge.mode;
+  applyDeriveVersion();
 }
 $('#settings').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -92,10 +102,18 @@ $('#btn-verify-derive').addEventListener('click', async () => {
   const out = $('#derive-verify'); out.textContent = 'Checking…';
   try {
     const f = $('#settings');
-    await api('config', { derive: { environment: f['derive.environment'].value, derive_wallet: f['derive.derive_wallet'].value, subaccount_id: f['derive.subaccount_id'].value } }, 'PUT');
+    await api('config', { derive: { api_version: f['derive.api_version'].value, environment: f['derive.environment'].value, derive_wallet: f['derive.derive_wallet'].value, subaccount_id: f['derive.subaccount_id'].value || 0, settlement_rpc_url: f['derive.settlement_rpc_url'].value } }, 'PUT');
     const r = await api('derive/verify', {});
-    out.innerHTML = `<span class="good">Connected.</span> Collateral ${fmtUsd(r.collateral_usd)} · margin ${r.margin_type || ''} · subaccounts ${r.subaccount_ids.join(', ')}`;
-  } catch (err) { out.innerHTML = `<span class="bad">${err.message}</span>`; }
+    cfg = (await api('config')).config; f['derive.subaccount_id'].value = cfg.derive.subaccount_id;
+    out.innerHTML = `<span class="good">Connected (${r.api}).</span> Collateral ${fmtUsd(r.collateral_usd)} · margin ${r.margin_type || ''} · subaccounts ${r.subaccount_ids.join(', ')}`;
+  } catch (err) { out.innerHTML = `<span class="bad">${esc(err.message)}</span>`; }
+});
+$('#btn-deposit').addEventListener('click', async () => {
+  const amount = parseFloat($('#deposit-amount').value);
+  if (!(amount > 0)) return alert('Enter a USDC amount');
+  if (!confirm(`Deposit ${amount} USDC from the hot wallet into Derive?`)) return;
+  try { await api('jobs/deposit_derive', { amount }); $('#action-note').textContent = `Queued deposit of ${amount} USDC. It runs on the next engine tick.`; poll(); }
+  catch (err) { alert(err.message); }
 });
 
 /* ---------------- actions ---------------- */
@@ -137,6 +155,7 @@ function render(st) {
   } else { $('#s-lp-usd').textContent = 'none'; $('#s-lp-range').textContent = 'No LP position. Use "Open LP position".'; $('#s-lp-fees').textContent = ''; }
 
   if (!st.derive_configured) { $('#s-hedge').textContent = 'not set up'; $('#s-hedge-inst').textContent = 'Fill in the Derive account settings below.'; $('#s-hedge-cost').textContent = ''; }
+  else if (h.connected === false && h.note && !h.enabled && !h.api) { $('#s-hedge').textContent = 'off'; $('#s-hedge-inst').textContent = h.note; $('#s-hedge-cost').textContent = ''; }
   else if (!h.connected) { $('#s-hedge').textContent = 'offline'; $('#s-hedge-inst').textContent = h.note || ''; $('#s-hedge-cost').textContent = ''; }
   else {
     $('#s-hedge').textContent = `${fmt(h.held_contracts, 3)} / ${fmt(h.target_contracts, 3)} puts`;
