@@ -1,9 +1,8 @@
 """Persistent user configuration.
 
 Everything the user sets through the UI lives in one JSON file under the data
-directory (default ``./data``). Secrets never live here: the hot wallet key is
-in an encrypted keystore file (see ``wallet.py``) and the password only exists
-in process memory while the app is unlocked.
+directory (default ``./data``). Paper trading needs no secrets: there is no
+wallet, no API key and nothing is ever signed.
 """
 from __future__ import annotations
 
@@ -22,32 +21,26 @@ def data_dir() -> Path:
 
 @dataclass
 class ChainSettings:
-    chain: str = "arbitrum"            # key into chains.CHAINS
-    rpc_url: str = ""                  # empty -> chain preset default
+    chain: str = "base"                # key into chains.CHAINS (ethereum | arbitrum | base)
+    rpc_url: str = ""                  # empty -> chain preset public RPCs (with failover)
     pool: str = "ETH/USDC 0.05%"       # key into chain preset pools
-    gas_reserve_eth: float = 0.005     # ETH kept back for gas, never deployed
 
 
 @dataclass
 class LPSettings:
-    deploy_usd: float = 1000.0         # target USD value to put in the LP position
+    deploy_usd: float = 10000.0        # paper position size in USD
     range_down_pct: float = 10.0       # lower bound = price * (1 - range_down_pct/100)
     range_up_pct: float = 10.0         # upper bound = price * (1 + range_up_pct/100)
-    slippage_pct: float = 0.5          # mint/burn/swap tolerance
-    auto_rebalance: bool = False       # re-center when out of range
+    auto_rebalance: bool = False       # re-center (paper) when out of range
     rebalance_after_min: int = 60      # price must be out of range for this long
-    auto_collect_fees_usd: float = 25.0  # collect when pending fees exceed this (0 = never)
+    simulate_entry_costs: bool = True  # charge swap fee + price impact + gas on open/close
 
 
 @dataclass
 class DeriveSettings:
     api_version: str = "v2"            # v2 (live on mainnet today) | v3 (Ethereum L1; testnet now)
-    environment: str = "mainnet"       # mainnet | testnet
-    derive_wallet: str = ""            # v2: Derive smart-contract wallet address. v3: owner EOA
-                                       #     (leave empty to use the hot wallet itself)
-    subaccount_id: int = 0             # subaccount holding the USDC collateral (0 = auto-discover)
+    environment: str = "mainnet"       # mainnet | testnet  (public market data only, no account needed)
     currency: str = "ETH"
-    settlement_rpc_url: str = ""       # v3 only: Ethereum / Sepolia RPC for on-chain deposits
 
 
 @dataclass
@@ -62,15 +55,16 @@ class HedgeSettings:
     max_premium_pct: float = 3.0       # per hedge purchase, % of LP value (safety cap)
     rehedge_tolerance_pct: float = 15.0  # ignore drifts smaller than this of target
     allow_reduce: bool = True          # sell puts when over-hedged
-    slippage_pct: float = 3.0          # limit = ask * (1 + slippage) for IOC buys
+    slippage_pct: float = 3.0          # paper fills: price for size beyond the top of book
     strike_drift_pct: float = 15.0     # keep existing hedge if strike within this of target
 
 
 @dataclass
 class EngineSettings:
-    dry_run: bool = True               # simulate every trade and transaction
     poll_interval_sec: int = 60
-    autostart: bool = False
+    autostart: bool = True             # start polling when the app launches
+    history_days: int = 5              # volume / fee lookback for projections
+    projection_days: int = 14          # horizon for the "what would I make" estimate
 
 
 @dataclass

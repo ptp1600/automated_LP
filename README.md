@@ -1,37 +1,34 @@
-# LP Hedger
+# LP Hedger — paper trading
 
-Simple local automation that provides concentrated liquidity on **Uniswap v3 ETH/USDC** and
-hedges the downside with **put options bought on [Derive](https://www.derive.xyz)** (on-chain,
-self-custodial options). Runs on your machine with a local encrypted hot wallet and a one-page UI.
+Would providing concentrated liquidity on **Uniswap v3 ETH/USDC**, hedged with **put options from
+[Derive](https://www.derive.xyz)**, actually make money? This app answers that without risking a cent:
+it polls a real pool on **Ethereum, Arbitrum or Base**, simulates an LP position of your size and range,
+buys the hedge the policy would buy against Derive's live order book, and tracks the P&L of both.
 
 ```
-┌──────────────┐   mints / collects / rebalances   ┌──────────────────────┐
-│  LP Hedger   │ ────────────────────────────────▶ │ Uniswap v3 ETH/USDC  │  (Arbitrum or Base)
-│  (local UI)  │                                   └──────────────────────┘
-│              │   buys / rolls / sells puts       ┌──────────────────────┐
-│  hot wallet  │ ────────────────────────────────▶ │ Derive options       │  (signed orders via API)
-└──────────────┘                                   └──────────────────────┘
+┌──────────────────────┐  slot0 / liquidity / fee growth / swap logs  ┌──────────────────────┐
+│  LP Hedger (paper)   │ ◀─────────────────────────────────────────── │ Uniswap v3 ETH/USDC  │
+│  local UI, no wallet │                                              └──────────────────────┘
+│                      │  instruments / tickers / index               ┌──────────────────────┐
+│  simulated LP+hedge  │ ◀─────────────────────────────────────────── │ Derive options (public│
+└──────────────────────┘                                              └──────────────────────┘
 ```
 
-## Why hedge an LP position with puts?
+Nothing is signed or sent. There is no wallet, no API key, no account.
 
-A concentrated LP range `[P_low, P_high]` behaves like a short put: as ETH drops toward `P_low`
-the position converts into ETH, and below `P_low` it is 100% ETH with linear downside.
-LP Hedger buys ETH puts struck near `P_low`, sized to the ETH the range would hold at `P_low`,
-so losses are capped below the range while LP fees pay for the premium. The dashboard shows the
-resulting P&L curve for ±40% moves before you commit anything.
+## What it shows
 
-## Features
-
-- **One-click LP**: pick a USD size and a range (e.g. ±10%), the app wraps ETH, approves, mints.
-- **Automatic hedge**: protective-put (cover ETH-at-range-low) or delta-neutral sizing; chooses
-  expiry/strike, buys IOC on Derive, rolls before expiry, trims when over-hedged, enforces a
-  premium budget.
-- **Fee collection** and optional **auto re-centering** when price leaves the range.
-- **Dry run by default**: everything is simulated and logged until you flip the switch.
-- **Local hot wallet**: encrypted keystore (web3 secret-storage v3) in `./data`, unlocked with a
-  password; the key never leaves the Python process.
-- **Zero build step**: Python backend, vanilla JS front-end, binds to `127.0.0.1` only.
+- **Pool, last 5 days**: swap volume, fees the pool paid out, and your share of in-range liquidity,
+  per day and in total.
+- **Would this make money?** For your size and range: fees per day the range *would have earned* over
+  the lookback (using the pool's own fee-growth accounting, diluted by your own liquidity), time in
+  range, fee APR, the live cost of the hedge (ask price + taker fee, rolled before expiry), net carry
+  per day, and a 14-day projection net of entry costs. With a plain-language verdict.
+- **Paper LP**: value, fees accrued, impermanent loss, entry costs (swap fee, price impact, gas),
+  P&L versus holding.
+- **Paper hedge**: legs held, premium paid at the *ask* (not mark), fees, spread cost, mark-to-market,
+  payouts at expiry.
+- **P&L over time**, **pool volume by day**, and the **what-if ETH moves ±40%** scenario chart.
 
 ## Quick start
 
@@ -42,23 +39,26 @@ pip install -e .            # or: pip install -r requirements.txt
 python run.py               # opens http://127.0.0.1:8787
 ```
 
-Then in the UI:
+1. Pick **chain** (Ethereum / Arbitrum / Base) and **pool** (0.05% or 0.3%) in Settings, size and
+   range, and save. Polling starts automatically; the 5-day history backfills within seconds.
+2. Read the **Would this make money?** panel. It already prices the planned position.
+3. Click **Open paper LP**. On the next tick the hedge policy buys puts (paper) and the equity curve starts.
+4. Leave it running. Fees accrue tick by tick from the pool's fee growth; the hedge is marked every tick,
+   rolled before expiry and settled at intrinsic value when it expires.
 
-1. **Create the hot wallet** (or import a key). Copy its address.
-2. **Fund it** on Arbitrum or Base: a little ETH for gas plus the ETH + USDC you want to deploy.
-   For a symmetric range you need roughly half the value in each asset.
-3. **Connect Derive** (pick the API generation in Settings → Derive account)
-   - **v2 — live on mainnet today.** Go to [derive.xyz](https://www.derive.xyz), sign in and deposit
-     USDC collateral. Open **Developers**, copy the **Derive wallet** address into Settings. Under
-     **Session keys**, register the hot wallet address so it may sign orders. Click **Verify
-     connection**; the subaccount ID is discovered automatically.
-   - **v3 — Ethereum L1, testnet now, mainnet on launch.** The hot wallet *is* the Derive account.
-     Fund it with USDC plus a little ETH for gas on the settlement chain, enter an RPC URL for that
-     chain, and click **Deposit to Derive**. The first deposit creates the subaccount (credited in a
-     couple of minutes). Click **Verify connection**.
-4. Review the **Settings**, click **Save**, press **Start**.
-5. Click **Open LP position**. The hedge is evaluated on every tick (default 60 s).
-6. When you are comfortable with the dry-run log, untick **Dry run**, save, and restart the engine.
+State lives in `./data` (git-ignored): `config.json`, `paper_state.json`, `history_<chain>_<fee>.json`,
+`equity.jsonl`, `events.jsonl`. Set `LP_HEDGER_DATA=/some/dir` to relocate it.
+
+## How the numbers are computed
+
+| Quantity | Method |
+|---|---|
+| Live fee accrual | Every tick reads `feeGrowthGlobal{0,1}X128`, `liquidity` and `slot0`. When both boundary ticks of your range exist on-chain, fees are the exact `feeGrowthInside` delta × your liquidity (Uniswap's own formula). Otherwise the global growth is credited only while the price is inside your range. Both are scaled by `L_pool / (L_pool + L_yours)` because your liquidity would dilute the pool. |
+| 5-day history | Tried per public RPC, in order: (a) the same state read at ~6 historical blocks per day (needs an archive node, e.g. `rpc.mevblocker.io`, `mainnet.base.org`); (b) raw `Swap` events in a 8–20 minute window every 4 hours, scaled to the slot (works on `arb1.arbitrum.io`, `mainnet.base.org`). Each swap carries the active liquidity, so fees per unit liquidity are exact inside the window. Nodes that return empty results for pruned ranges are rejected. Live polls then extend the history in hourly buckets. |
+| Volume | From fee growth: `fees / fee_rate`; from logs: the sum of swap inputs. |
+| Entry / exit costs | Half the size swapped through the same pool: fee tier + price impact against current active liquidity (average execution = half the move) + gas at the current gas price (`gas_open_units` / `gas_close_units` per chain). |
+| Hedge fill | Best ask for what the top of book holds, `slippage_pct` worse for the rest; taker fee `rate × index` per contract capped at 12.5% of the premium, plus the flat base fee. Sells use the bid. Expired legs pay `max(K − S, 0)`. |
+| Projection | `fees/day` = lookback fees for your range ÷ days covered; `hedge/day` = (premium + fee) ÷ (days to expiry − roll buffer); horizon net = (fees − hedge) × days − entry costs. |
 
 ## Strategy knobs (Settings → Hedge policy)
 
@@ -71,21 +71,24 @@ Then in the UI:
 | Roll when ≤ days left | Sell the old put and buy a fresh one when it gets this close to expiry. |
 | Max premium per purchase | Safety cap as % of LP value; the order is scaled down and a warning logged if exceeded. |
 | Re-hedge tolerance | Ignore drifts smaller than this % of the target to save fees. |
+| Fill slippage | How much worse than the top of book the paper fill assumes for size beyond the displayed quantity. |
 
-## How it works
+## Modules
 
 | Module | Role |
 |---|---|
-| `lp_hedger/uniswap_math.py` | Pure v3 math: ticks ↔ prices, liquidity ↔ amounts, exposure at range bounds, mint planning. |
-| `lp_hedger/uniswap.py` | web3 client: pool lookup via factory, read position & pending fees, mint / remove / collect / swap. |
-| `lp_hedger/derive.py` | Derive REST client for both API generations (v2 on Derive Chain, v3 on Ethereum L1) with EIP-712 action signing, price-band clamping and v3 on-chain deposits. Signing is verified byte-for-byte against Derive's official signing package. |
+| `lp_hedger/rpc.py` | Tiny JSON-RPC client: batching (chunked for free-tier limits), retries, error classification. |
+| `lp_hedger/pool.py` | Read-only pool view: state, tick data, fee-growth-inside, swap logs, gas price, RPC failover. |
+| `lp_hedger/history.py` | Volume / fee intervals, archive and log backfills, daily buckets, range statistics. |
+| `lp_hedger/paper.py` | Paper LP (sizing, accrual, costs, valuation), paper hedge (fills, fees, settlement), projection. |
 | `lp_hedger/strategy.py` | Hedge policy: target size, instrument selection, roll/trim decisions, scenario table. |
-| `lp_hedger/engine.py` | Background loop: refresh → run queued jobs → hedge step; dry-run aware; event log. |
-| `lp_hedger/server.py` | FastAPI app serving the UI and a small JSON API. |
-| `lp_hedger/static/` | The single-page UI. |
+| `lp_hedger/derive.py` | Derive REST client (v2 and v3). Only public endpoints are used here; signing stays for a future live mode. |
+| `lp_hedger/uniswap_math.py` | Pure v3 math: ticks ↔ prices, liquidity ↔ amounts, exposure at range bounds. |
+| `lp_hedger/engine.py` | Background loop: poll → history → jobs → accrue → hedge → projection → equity. |
+| `lp_hedger/server.py`, `static/` | FastAPI JSON API and the single-page UI. |
 
-State lives in `./data` (git-ignored): `config.json`, `hotwallet.keystore.json`, `state.json`,
-`events.jsonl`. Set `LP_HEDGER_DATA=/some/dir` to relocate it.
+The on-chain execution code (hot wallet, mint/collect/swap, order signing with a session key) from the
+earlier version is in git history (`bcb3610`) should you want to turn a profitable paper strategy live.
 
 ## Testing
 
@@ -94,29 +97,14 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite covers the Uniswap math, the hedge policy, order signing (cross-checked byte-for-byte
-against Derive's official signing package), config handling and the HTTP API.
+Covers the v3 math, the hedge policy, interval/volume math, both backfill methods against a fake node,
+paper fills/fees/settlement, projection, RPC batching and the HTTP API.
 
-## Security notes
+## Caveats
 
-- Fund the hot wallet only with what you intend to deploy. Treat it like cash in a browser wallet.
-- The server binds to localhost. Do not expose it (`--host 0.0.0.0`) on a shared network.
-- Session keys on Derive can be scoped and given an expiry; prefer that over using the owner key.
-- Protocol constants (domain separators, trade module, action manager) are in `lp_hedger/derive.py`
-  and were taken from Derive's Contracts page and official SDKs. Re-check them if Derive redeploys.
-
-## Derive v2 vs v3
-
-Derive is moving from v2 (its own L2, "Derive Chain", smart-contract wallets, `api.lyra.finance`) to
-v3 (Ethereum L1 settlement with ZK proofs, plain EOA accounts, `api.derive.xyz/v3`). At the time of
-writing v3 runs on Sepolia testnet and mainnet has not launched, while v2 mainnet is live. LP Hedger
-speaks both: the client swaps base URL, auth header names (`X-Lyra*` vs `X-Derive*`), domain
-separator, nonce format (milliseconds vs nanoseconds) and the ticker shape (full vs slim) per
-profile. Switch with one setting when v3 mainnet goes live.
-
-## Limitations / roadmap
-
-- ETH/USDC only out of the box. Other majors (e.g. BTC) need a pool preset and `derive.currency`.
-- Rebalancing swaps through the same pool; large positions may want a smarter router.
-- Hedge P&L in the scenario view uses intrinsic value at expiry, not a live option model.
-- Not financial advice. Options can expire worthless; LP positions can underperform holding.
+- Public RPCs are rate-limited and differ in what they serve; the app rotates through several per chain.
+  A private RPC URL (ideally archive) in Settings makes the history exact.
+- Log-sampled history observes 8–20 minutes out of every 4 hours; bursts between samples are missed.
+- Fee accrual assumes your liquidity does not change anyone else's behaviour beyond dilution.
+- Hedge settlement ignores Derive's settlement fee; fills assume the quote is still there when you cross it.
+- Past volume is not future volume. Not financial advice.

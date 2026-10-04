@@ -1,36 +1,36 @@
-"""Local web server: serves the UI and a small JSON API bound to 127.0.0.1."""
+"""Local web server: serves the paper-trading UI and a small JSON API on 127.0.0.1."""
 from __future__ import annotations
 
 import argparse
 import threading
 import webbrowser
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
 from .chains import presets_for_ui
 from .config import Config
 from .engine import Engine
-from .wallet import HotWallet
 
 STATIC = Path(__file__).parent / "static"
 
-app = FastAPI(title="LP Hedger", docs_url=None, redoc_url=None)
+app = FastAPI(title="LP Hedger (paper)", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 cfg = Config.load()
-wallet = HotWallet()
-engine = Engine(cfg, wallet)
+engine = Engine(cfg)
+
+JOBS = {"open_lp", "close_lp", "rebalance", "hedge_now", "close_hedges", "reset", "refresh_history"}
 
 
-class WalletReq(BaseModel):
-    password: str
-    private_key: Optional[str] = None
+@app.on_event("startup")
+def _autostart() -> None:
+    if cfg.engine.autostart:
+        engine.start()
 
 
 @app.get("/")
@@ -64,42 +64,9 @@ def put_config(patch: dict[str, Any]):
     return {"config": cfg.to_dict()}
 
 
-@app.post("/api/wallet/create")
-def wallet_create(req: WalletReq):
-    try:
-        addr = wallet.create(req.password, req.private_key or None)
-    except (FileExistsError, ValueError) as e:
-        raise HTTPException(400, str(e))
-    engine.log("info", f"hot wallet ready: {addr}")
-    engine.rebuild_clients()
-    return {"address": addr}
-
-
-@app.post("/api/wallet/unlock")
-def wallet_unlock(req: WalletReq):
-    try:
-        addr = wallet.unlock(req.password)
-    except (FileNotFoundError, ValueError) as e:
-        raise HTTPException(400, str(e))
-    engine.rebuild_clients()
-    if cfg.engine.autostart and not engine.running:
-        engine.start()
-    return {"address": addr}
-
-
-@app.post("/api/wallet/lock")
-def wallet_lock():
-    engine.stop()
-    wallet.lock()
-    return {"ok": True}
-
-
 @app.post("/api/engine/start")
 def engine_start():
-    try:
-        engine.start()
-    except RuntimeError as e:
-        raise HTTPException(400, str(e))
+    engine.start()
     return {"running": engine.running}
 
 
@@ -109,42 +76,22 @@ def engine_stop():
     return {"running": engine.running}
 
 
-class JobReq(BaseModel):
-    amount: Optional[float] = None
-
-
-@app.post("/api/jobs/{job}")
-def enqueue(job: str, req: Optional[JobReq] = None):
-    if job not in {"open_lp", "close_lp", "collect_fees", "rebalance", "hedge_now", "close_hedges", "deposit_derive"}:
+@app.post("/api/paper/{job}")
+def enqueue(job: str):
+    if job not in JOBS:
         raise HTTPException(404, "unknown job")
     if not engine.running:
         raise HTTPException(400, "Start the engine first")
-    params = req.model_dump(exclude_none=True) if req else {}
-    if job == "deposit_derive" and not params.get("amount"):
-        raise HTTPException(400, "amount is required")
-    engine.enqueue(job, **params)
+    if job == "open_lp" and engine.lp is not None:
+        raise HTTPException(400, "A paper LP position is already open")
+    if job in ("close_lp", "rebalance") and engine.lp is None:
+        raise HTTPException(400, "No paper LP position is open")
+    engine.enqueue(job)
     return {"queued": job}
 
 
-@app.post("/api/derive/verify")
-def derive_verify():
-    if not wallet.unlocked:
-        raise HTTPException(400, "Unlock the wallet first")
-    if not engine.derive_configured():
-        raise HTTPException(400, "Fill in the Derive wallet address first (v2) or pick v3")
-    engine.rebuild_clients()
-    try:
-        if cfg.derive.subaccount_id == 0 and not engine.ensure_subaccount():
-            raise HTTPException(400, "This wallet has no Derive subaccount yet. Deposit collateral first.")
-        return engine.derive.verify_connection()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(400, f"{e}")
-
-
 def main() -> None:
-    p = argparse.ArgumentParser(description="LP Hedger: hedged Uniswap v3 LP automation")
+    p = argparse.ArgumentParser(description="LP Hedger: paper-trade hedged Uniswap v3 LP positions")
     p.add_argument("--port", type=int, default=8787)
     p.add_argument("--host", default="127.0.0.1", help="bind address (keep local!)")
     p.add_argument("--no-browser", action="store_true")
@@ -152,7 +99,7 @@ def main() -> None:
     url = f"http://{args.host}:{args.port}"
     if not args.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    print(f"LP Hedger UI: {url}")
+    print(f"LP Hedger paper trading UI: {url}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 

@@ -1,4 +1,3 @@
-import pytest
 from fastapi.testclient import TestClient
 
 from lp_hedger.config import Config
@@ -7,10 +6,12 @@ from lp_hedger.config import Config
 def test_config_roundtrip_and_coercion(tmp_path, monkeypatch):
     monkeypatch.setenv("LP_HEDGER_DATA", str(tmp_path))
     cfg = Config()
-    cfg.update({"lp": {"deploy_usd": "2500", "auto_rebalance": "true"}, "engine": {"dry_run": False},
-                "derive": {"subaccount_id": "42"}, "bogus": {"x": 1}})
+    cfg.update({"lp": {"deploy_usd": "2500", "auto_rebalance": "true"}, "engine": {"autostart": False},
+                "chain": {"chain": "ethereum"}, "bogus": {"x": 1},
+                "derive": {"subaccount_id": "42"}})          # obsolete key from the execution-era config: ignored
     assert cfg.lp.deploy_usd == 2500.0 and cfg.lp.auto_rebalance is True
-    assert cfg.engine.dry_run is False and cfg.derive.subaccount_id == 42
+    assert cfg.engine.autostart is False and cfg.chain.chain == "ethereum"
+    assert not hasattr(cfg.derive, "subaccount_id")
     cfg.save()
     again = Config.load()
     assert again.to_dict() == cfg.to_dict()
@@ -19,27 +20,20 @@ def test_config_roundtrip_and_coercion(tmp_path, monkeypatch):
 def test_api_flow():
     from lp_hedger import server
 
+    server.engine.stop()
     c = TestClient(server.app)
     assert c.get("/").status_code == 200
     st = c.get("/api/status").json()
-    assert st["wallet_exists"] is False and st["running"] is False
-    assert c.get("/api/presets").json()[0]["key"] == "arbitrum"
+    assert st["paper"] is True and st["running"] is False
+    keys = [p["key"] for p in c.get("/api/presets").json()]
+    assert keys == ["ethereum", "arbitrum", "base"]
+    assert all(len(p["pools"]) >= 2 for p in c.get("/api/presets").json())
 
-    r = c.post("/api/wallet/create", json={"password": "short"})
-    assert r.status_code == 400
-    r = c.post("/api/wallet/create", json={"password": "correct horse battery"})
-    assert r.status_code == 200 and r.json()["address"].startswith("0x")
-    addr = r.json()["address"]
-    assert c.post("/api/wallet/create", json={"password": "correct horse battery"}).status_code == 400
-
-    c.post("/api/wallet/lock")
-    assert c.get("/api/status").json()["wallet_unlocked"] is False
-    assert c.post("/api/wallet/unlock", json={"password": "wrong password!"}).status_code == 400
-    assert c.post("/api/wallet/unlock", json={"password": "correct horse battery"}).json()["address"] == addr
-
-    r = c.put("/api/config", json={"hedge": {"coverage_pct": 80}, "derive": {"derive_wallet": "0x" + "ab" * 20, "subaccount_id": 9}})
+    r = c.put("/api/config", json={"hedge": {"coverage_pct": 80}, "lp": {"deploy_usd": 5000}})
     assert r.status_code == 200 and r.json()["config"]["hedge"]["coverage_pct"] == 80
-    assert c.post("/api/jobs/open_lp").status_code == 400       # engine not running
-    assert c.post("/api/jobs/nope").status_code == 404
-    assert c.get("/api/status").json()["derive_configured"] is True
-    assert c.get("/api/status").json()["dry_run"] is True
+    assert c.put("/api/config", json={"lp": {"deploy_usd": "lots"}}).status_code == 400
+    assert c.post("/api/paper/open_lp").status_code == 400       # engine not running
+    assert c.post("/api/paper/nope").status_code == 404
+    assert c.post("/api/paper/close_lp").status_code == 400
+    # no wallet endpoints exist any more
+    assert c.post("/api/wallet/create", json={"password": "x" * 10}).status_code in (404, 405)

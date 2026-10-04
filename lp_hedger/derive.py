@@ -209,11 +209,11 @@ def parse_option_name(name: str) -> tuple[float, int, str]:
 # ---- client -------------------------------------------------------------------------
 
 class DeriveClient:
-    def __init__(self, profile: ApiProfile, wallet: HotWallet, owner: str, subaccount_id: int,
+    def __init__(self, profile: ApiProfile, wallet: Optional[HotWallet], owner: str, subaccount_id: int,
                  dry_run: bool = True, log: Optional[Callable[[str, str], None]] = None,
                  session: Optional[requests.Session] = None):
         self.p = profile
-        self.wallet = wallet
+        self.wallet = wallet        # None is fine for public market data (paper trading)
         self.owner = owner          # v2: Derive smart-contract wallet; v3: owning EOA
         self.subaccount_id = int(subaccount_id)
         self.dry_run = dry_run
@@ -221,7 +221,7 @@ class DeriveClient:
         self.http = session or requests.Session()
 
     @classmethod
-    def from_settings(cls, api_version: str, environment: str, wallet: HotWallet, owner: str,
+    def from_settings(cls, api_version: str, environment: str, wallet: Optional[HotWallet], owner: str,
                       subaccount_id: int, **kw) -> "DeriveClient":
         key = f"{api_version}-{environment}"
         if key not in PROFILES:
@@ -252,7 +252,7 @@ class DeriveClient:
         return body.get("result", body) if isinstance(body, dict) else body
 
     def auth_headers(self) -> dict[str, str]:
-        if not self.owner:
+        if not self.owner or self.wallet is None:
             raise DeriveError("Derive wallet address not configured")
         ts = str(int(time.time() * 1000))
         px = self.p.header_prefix
