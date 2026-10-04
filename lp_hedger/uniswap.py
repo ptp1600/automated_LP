@@ -11,8 +11,10 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Callable, Optional
 
+import requests
 from web3 import Web3
 from web3.contract import Contract
+from web3.providers.rpc.utils import ExceptionRetryConfiguration
 
 from . import abis
 from .chains import TICK_SPACING_BY_FEE, ChainPreset, PoolPreset
@@ -48,18 +50,58 @@ class UniswapClient:
         self.dry_run = dry_run
         self.slippage = slippage_pct / 100.0
         self.log = log or (lambda level, msg: None)
-        self.w3 = Web3(Web3.HTTPProvider(rpc_url or chain.default_rpc, request_kwargs={"timeout": 30}))
-        self.factory: Contract = self.w3.eth.contract(Web3.to_checksum_address(chain.factory), abi=abis.FACTORY)
-        self._pool: Optional[Contract] = None
-        self.npm: Contract = self.w3.eth.contract(Web3.to_checksum_address(chain.position_manager),
-                                                  abi=abis.POSITION_MANAGER)
-        self.router: Contract = self.w3.eth.contract(Web3.to_checksum_address(chain.swap_router02),
-                                                     abi=abis.SWAP_ROUTER02)
-        self.weth: Contract = self.w3.eth.contract(Web3.to_checksum_address(chain.weth), abi=abis.WETH)
-        self.usdc: Contract = self.w3.eth.contract(Web3.to_checksum_address(chain.usdc), abi=abis.ERC20)
+        self._user_rpc = rpc_url
+        self._candidates = [rpc_url] if rpc_url else [chain.default_rpc, *chain.fallback_rpcs]
+        self._pool_address: Optional[str] = None
         self._meta: Optional[PoolMeta] = None
         self._token0: Optional[str] = None
         self._token1: Optional[str] = None
+        self.rpc_url = self._pick_rpc(rpc_url)
+        self._bind(self.rpc_url)
+
+    def _bind(self, url: str) -> None:
+        """(Re)create the web3 instance and contract handles for an RPC URL."""
+        self.rpc_url = url
+        self.w3 = self._make_w3(url)
+        c = self.chain
+        self.factory: Contract = self.w3.eth.contract(Web3.to_checksum_address(c.factory), abi=abis.FACTORY)
+        self.npm: Contract = self.w3.eth.contract(Web3.to_checksum_address(c.position_manager), abi=abis.POSITION_MANAGER)
+        self.router: Contract = self.w3.eth.contract(Web3.to_checksum_address(c.swap_router02), abi=abis.SWAP_ROUTER02)
+        self.weth: Contract = self.w3.eth.contract(Web3.to_checksum_address(c.weth), abi=abis.WETH)
+        self.usdc: Contract = self.w3.eth.contract(Web3.to_checksum_address(c.usdc), abi=abis.ERC20)
+        self._pool: Optional[Contract] = None
+        if self._pool_address:
+            self._pool = self.w3.eth.contract(Web3.to_checksum_address(self._pool_address), abi=abis.POOL)
+
+    def rotate_rpc(self) -> Optional[str]:
+        """Switch to the next preset RPC (after a 429 etc). Returns the new URL or None."""
+        if len(self._candidates) < 2:
+            return None
+        i = self._candidates.index(self.rpc_url) if self.rpc_url in self._candidates else -1
+        nxt = self._candidates[(i + 1) % len(self._candidates)]
+        self._bind(nxt)
+        return nxt
+
+    # ---- rpc -------------------------------------------------------------------
+    @staticmethod
+    def _make_w3(url: str) -> Web3:
+        # Public RPCs rate-limit (HTTP 429): retry reads with exponential backoff.
+        retry = ExceptionRetryConfiguration(
+            errors=(requests.ConnectionError, requests.HTTPError, requests.Timeout), retries=3, backoff_factor=0.5)
+        return Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 30}, exception_retry_configuration=retry))
+
+    def _pick_rpc(self, rpc_url: str) -> str:
+        """User-provided URL wins; otherwise the first preset RPC that answers."""
+        if rpc_url:
+            return rpc_url
+        candidates = (self.chain.default_rpc, *self.chain.fallback_rpcs)
+        for url in candidates:
+            try:
+                if self._make_w3(url).eth.chain_id == self.chain.chain_id:
+                    return url
+            except Exception:
+                continue
+        return self.chain.default_rpc
 
     # ---- metadata ------------------------------------------------------------
     def connected(self) -> bool:
@@ -77,7 +119,8 @@ class UniswapClient:
                                                   self.pool_preset.fee).call()
             if int(addr, 16) == 0:
                 raise ValueError(f"No {self.pool_preset.name} pool on {self.chain.name}")
-            self._pool = self.w3.eth.contract(Web3.to_checksum_address(addr), abi=abis.POOL)
+            self._pool_address = Web3.to_checksum_address(addr)
+            self._pool = self.w3.eth.contract(self._pool_address, abi=abis.POOL)
         return self._pool
 
     @property

@@ -301,7 +301,17 @@ class DeriveClient:
 
     # ---- private -------------------------------------------------------------
     def get_subaccounts(self) -> dict:
-        return self._post("private/get_subaccounts", {"wallet": self.owner}, private=True)
+        try:
+            return self._post("private/get_subaccounts", {"wallet": self.owner}, private=True)
+        except DeriveError as e:
+            msg = str(e)
+            if "Session key not found" in msg or "wallet not found" in msg.lower():
+                hint = ("Derive does not know this wallet yet. "
+                        + ("Deposit collateral from the hot wallet to create the account."
+                           if self.version == "v3" else
+                           "Check the Derive wallet address and register the hot wallet as a session key on derive.xyz."))
+                raise DeriveError(f"{hint} ({msg})") from e
+            raise
 
     def get_subaccount(self, subaccount_id: Optional[int] = None) -> dict:
         return self._post("private/get_subaccount", {"subaccount_id": subaccount_id or self.subaccount_id}, private=True)

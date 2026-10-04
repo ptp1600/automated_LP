@@ -31,6 +31,7 @@ class ChainPreset:
     position_manager: str
     swap_router02: str
     pools: dict[str, PoolPreset] = field(default_factory=dict)
+    fallback_rpcs: tuple[str, ...] = ()
 
 
 CHAINS: dict[str, ChainPreset] = {
@@ -40,6 +41,7 @@ CHAINS: dict[str, ChainPreset] = {
         chain_id=42161,
         default_rpc="https://arb1.arbitrum.io/rpc",
         explorer="https://arbiscan.io",
+        fallback_rpcs=("https://arbitrum-one-rpc.publicnode.com", "https://arbitrum.llamarpc.com"),
         weth="0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
         usdc="0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
         usdc_decimals=6,
@@ -55,8 +57,9 @@ CHAINS: dict[str, ChainPreset] = {
         key="base",
         name="Base",
         chain_id=8453,
-        default_rpc="https://mainnet.base.org",
+        default_rpc="https://base-rpc.publicnode.com",   # mainnet.base.org rate-limits hard (429)
         explorer="https://basescan.org",
+        fallback_rpcs=("https://mainnet.base.org", "https://base.llamarpc.com"),
         weth="0x4200000000000000000000000000000000000006",
         usdc="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         usdc_decimals=6,

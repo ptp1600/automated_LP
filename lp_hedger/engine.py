@@ -166,6 +166,10 @@ class Engine:
             try:
                 self.tick()
             except Exception as e:  # keep the loop alive, surface the error
+                if "429" in str(e) and self._uni is not None:
+                    new = self._uni.rotate_rpc()
+                    if new:
+                        self.log("warn", f"RPC rate-limited; switched to {new}")
                 self.log("error", f"tick failed: {e}")
                 self._snapshot["last_error"] = f"{e}"
                 self._snapshot["last_error_detail"] = traceback.format_exc()[-2000:]
@@ -178,7 +182,7 @@ class Engine:
         uni = self.uni
         chain = uni.chain
         snap["chain"] = {"name": chain.name, "chain_id": chain.chain_id, "explorer": chain.explorer,
-                         "pool": uni.pool_preset.name, "rpc_ok": uni.connected()}
+                         "pool": uni.pool_preset.name, "rpc_ok": uni.connected(), "rpc": uni.rpc_url}
         if not snap["chain"]["rpc_ok"]:
             raise RuntimeError(f"RPC not reachable or wrong chain id for {chain.name}")
         snap["chain"]["pool_address"] = uni.pool_address

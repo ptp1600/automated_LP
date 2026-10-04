@@ -180,7 +180,7 @@ function render(st) {
 
   // events
   $('#events').innerHTML = (st.events || []).map(e => `<div class="ev ${e.level}"><span class="t">${new Date(e.ts * 1000).toLocaleString()}</span><span class="m">${esc(e.msg)}</span></div>`).join('');
-  drawChart(st.scenarios || []);
+  drawChart(lp.token_id ? (st.scenarios || []) : []);
 }
 const esc = (s) => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
