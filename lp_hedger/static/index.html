@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LP Hedger</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">LP&nbsp;Hedger <span class="sub">Uniswap v3 · hedged with Derive puts</span></div>
+  <div class="header-right">
+    <span id="mode-badge" class="badge">…</span>
+    <span id="engine-badge" class="badge">…</span>
+    <button id="btn-toggle-engine" class="btn primary">Start</button>
+  </div>
+</header>
+
+<main>
+  <!-- ========== WALLET GATE ========== -->
+  <section id="gate" class="card center hidden">
+    <h2 id="gate-title">Create your hot wallet</h2>
+    <p class="muted" id="gate-text"></p>
+    <form id="gate-form">
+      <label>Password <input type="password" id="gate-password" minlength="8" required autocomplete="new-password"></label>
+      <details id="gate-import-wrap"><summary>Import an existing private key instead</summary>
+        <label>Private key (hex) <input type="password" id="gate-import" placeholder="0x…" autocomplete="off"></label>
+      </details>
+      <button class="btn primary" type="submit" id="gate-submit">Create wallet</button>
+    </form>
+    <p class="warn small">The key is encrypted on this machine and never leaves the app. Fund it only with what you intend to deploy.</p>
+  </section>
+
+  <div id="app" class="hidden">
+  <!-- ========== STATUS ROW ========== -->
+  <section class="grid stats">
+    <div class="card stat"><div class="label">ETH price</div><div class="value" id="s-price">–</div><div class="hint" id="s-chain">–</div></div>
+    <div class="card stat"><div class="label">Hot wallet</div><div class="value" id="s-wallet-usd">–</div><div class="hint mono" id="s-wallet"></div><div class="hint" id="s-wallet-bal"></div></div>
+    <div class="card stat"><div class="label">LP position</div><div class="value" id="s-lp-usd">–</div><div class="hint" id="s-lp-range"></div><div class="hint" id="s-lp-fees"></div></div>
+    <div class="card stat"><div class="label">Hedge</div><div class="value" id="s-hedge">–</div><div class="hint" id="s-hedge-inst"></div><div class="hint" id="s-hedge-cost"></div></div>
+  </section>
+
+  <section class="grid two">
+    <!-- ========== SCENARIO CHART ========== -->
+    <div class="card">
+      <h3>What happens if ETH moves?</h3>
+      <p class="muted small">P&amp;L versus now (USD). Hedge legs valued at expiry intrinsic value. Dashed line is "just hold the same ETH/USDC".</p>
+      <svg id="chart" viewBox="0 0 640 300" preserveAspectRatio="none"></svg>
+      <div id="chart-legend" class="legend"></div>
+      <table id="scenario-table" class="small"></table>
+    </div>
+
+    <!-- ========== ACTIONS + EVENTS ========== -->
+    <div class="card">
+      <h3>Actions</h3>
+      <div class="actions">
+        <button class="btn" data-job="open_lp">Open LP position</button>
+        <button class="btn" data-job="collect_fees">Collect fees</button>
+        <button class="btn" data-job="rebalance">Rebalance range</button>
+        <button class="btn" data-job="hedge_now">Re-check hedge</button>
+        <button class="btn danger" data-job="close_hedges">Close all hedges</button>
+        <button class="btn danger" data-job="close_lp">Close LP position</button>
+      </div>
+      <p class="muted small" id="action-note">Actions run on the engine's next tick (the engine must be running).</p>
+      <div id="hedge-plan" class="plan"></div>
+      <h3>Activity</h3>
+      <div id="events" class="events"></div>
+    </div>
+  </section>
+
+  <!-- ========== SETTINGS ========== -->
+  <section class="card">
+    <h3>Settings <span class="muted small">(saved locally; engine picks them up immediately)</span></h3>
+    <form id="settings">
+      <div class="grid four">
+        <fieldset>
+          <legend>Chain &amp; pool</legend>
+          <label>Chain <select name="chain.chain" id="chain-select"></select></label>
+          <label>Pool <select name="chain.pool" id="pool-select"></select></label>
+          <label>RPC URL <input name="chain.rpc_url" placeholder="leave empty for public RPC"></label>
+          <label>Gas reserve (ETH) <input name="chain.gas_reserve_eth" type="number" step="0.001"></label>
+        </fieldset>
+        <fieldset>
+          <legend>LP position</legend>
+          <label>Deploy (USD) <input name="lp.deploy_usd" type="number" step="10"></label>
+          <label>Range below price (%) <input name="lp.range_down_pct" type="number" step="0.5"></label>
+          <label>Range above price (%) <input name="lp.range_up_pct" type="number" step="0.5"></label>
+          <label>Slippage (%) <input name="lp.slippage_pct" type="number" step="0.1"></label>
+          <label class="check"><input name="lp.auto_rebalance" type="checkbox"> Auto re-center when out of range</label>
+          <label>…after (minutes) <input name="lp.rebalance_after_min" type="number"></label>
+          <label>Auto-collect fees above (USD, 0=off) <input name="lp.auto_collect_fees_usd" type="number"></label>
+        </fieldset>
+        <fieldset>
+          <legend>Derive account</legend>
+          <label>Environment <select name="derive.environment"><option value="mainnet">mainnet</option><option value="testnet">testnet</option></select></label>
+          <label>Derive wallet address <input name="derive.derive_wallet" placeholder="0x… (Derive → Developers)"></label>
+          <label>Subaccount ID <input name="derive.subaccount_id" type="number"></label>
+          <button type="button" class="btn" id="btn-verify-derive">Verify connection</button>
+          <div id="derive-verify" class="small"></div>
+          <details class="small help"><summary>How to connect Derive</summary>
+            <ol>
+              <li>Open <a href="https://www.derive.xyz" target="_blank" rel="noopener">derive.xyz</a>, sign in and deposit USDC as collateral.</li>
+              <li>Go to <b>Developers</b>. Copy the <b>Derive wallet</b> address and your <b>subaccount ID</b> into the fields above.</li>
+              <li>Under <b>Session keys</b>, register this app's hot wallet address (shown top-left of the Wallet card) so it may sign orders.</li>
+              <li>Click <b>Verify connection</b>.</li>
+            </ol>
+          </details>
+        </fieldset>
+        <fieldset>
+          <legend>Hedge policy</legend>
+          <label class="check"><input name="hedge.enabled" type="checkbox"> Hedging enabled</label>
+          <label>Mode <select name="hedge.mode"><option value="protective_put">Protective put (cover ETH at range low)</option><option value="delta_neutral">Delta neutral (cover current ETH delta)</option></select></label>
+          <label>Coverage (%) <input name="hedge.coverage_pct" type="number" step="5"></label>
+          <label>Strike offset from range low (%) <input name="hedge.strike_offset_pct" type="number" step="1"></label>
+          <label>Target days to expiry <input name="hedge.target_days_to_expiry" type="number"></label>
+          <label>Roll when ≤ days left <input name="hedge.roll_days_before_expiry" type="number"></label>
+          <label>Max premium per purchase (% of LP) <input name="hedge.max_premium_pct" type="number" step="0.1"></label>
+          <label>Re-hedge tolerance (%) <input name="hedge.rehedge_tolerance_pct" type="number" step="1"></label>
+          <label>Order slippage (%) <input name="hedge.slippage_pct" type="number" step="0.5"></label>
+          <label class="check"><input name="hedge.allow_reduce" type="checkbox"> Sell puts when over-hedged</label>
+        </fieldset>
+      </div>
+      <div class="grid four">
+        <fieldset>
+          <legend>Engine</legend>
+          <label class="check"><input name="engine.dry_run" type="checkbox"> <b>Dry run</b> (simulate, never send)</label>
+          <label>Poll interval (seconds) <input name="engine.poll_interval_sec" type="number" min="10"></label>
+          <label class="check"><input name="engine.autostart" type="checkbox"> Start engine when app launches</label>
+        </fieldset>
+      </div>
+      <div class="row">
+        <button class="btn primary" type="submit">Save settings</button>
+        <span id="settings-msg" class="small muted"></span>
+      </div>
+    </form>
+  </section>
+  </div>
+</main>
+<footer class="muted small">Local only (127.0.0.1). Not financial advice. Options can expire worthless; LP positions can lose value versus holding.</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,135 @@
+"""Persistent user configuration.
+
+Everything the user sets through the UI lives in one JSON file under the data
+directory (default ``./data``). Secrets never live here: the hot wallet key is
+in an encrypted keystore file (see ``wallet.py``) and the password only exists
+in process memory while the app is unlocked.
+"""
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
+from typing import Any
+
+
+def data_dir() -> Path:
+    d = Path(os.environ.get("LP_HEDGER_DATA", "data")).expanduser()
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@dataclass
+class ChainSettings:
+    chain: str = "arbitrum"            # key into chains.CHAINS
+    rpc_url: str = ""                  # empty -> chain preset default
+    pool: str = "ETH/USDC 0.05%"       # key into chain preset pools
+    gas_reserve_eth: float = 0.005     # ETH kept back for gas, never deployed
+
+
+@dataclass
+class LPSettings:
+    deploy_usd: float = 1000.0         # target USD value to put in the LP position
+    range_down_pct: float = 10.0       # lower bound = price * (1 - range_down_pct/100)
+    range_up_pct: float = 10.0         # upper bound = price * (1 + range_up_pct/100)
+    slippage_pct: float = 0.5          # mint/burn/swap tolerance
+    auto_rebalance: bool = False       # re-center when out of range
+    rebalance_after_min: int = 60      # price must be out of range for this long
+    auto_collect_fees_usd: float = 25.0  # collect when pending fees exceed this (0 = never)
+
+
+@dataclass
+class DeriveSettings:
+    environment: str = "mainnet"       # mainnet | testnet
+    derive_wallet: str = ""            # smart-contract wallet address shown on derive.xyz
+    subaccount_id: int = 0             # subaccount holding the USDC collateral
+    currency: str = "ETH"
+
+
+@dataclass
+class HedgeSettings:
+    enabled: bool = True
+    mode: str = "protective_put"       # protective_put | delta_neutral
+    coverage_pct: float = 100.0        # % of downside exposure to cover
+    strike_offset_pct: float = 0.0     # strike = range_low * (1 + offset/100)
+    target_days_to_expiry: int = 14    # prefer expiries near this
+    min_days_to_expiry: int = 3        # never buy anything closer than this
+    roll_days_before_expiry: int = 2   # roll when held hedge is this close
+    max_premium_pct: float = 3.0       # per hedge purchase, % of LP value (safety cap)
+    rehedge_tolerance_pct: float = 15.0  # ignore drifts smaller than this of target
+    allow_reduce: bool = True          # sell puts when over-hedged
+    slippage_pct: float = 3.0          # limit = ask * (1 + slippage) for IOC buys
+    strike_drift_pct: float = 15.0     # keep existing hedge if strike within this of target
+
+
+@dataclass
+class EngineSettings:
+    dry_run: bool = True               # simulate every trade and transaction
+    poll_interval_sec: int = 60
+    autostart: bool = False
+
+
+@dataclass
+class Config:
+    chain: ChainSettings = field(default_factory=ChainSettings)
+    lp: LPSettings = field(default_factory=LPSettings)
+    derive: DeriveSettings = field(default_factory=DeriveSettings)
+    hedge: HedgeSettings = field(default_factory=HedgeSettings)
+    engine: EngineSettings = field(default_factory=EngineSettings)
+
+    # ---- persistence -----------------------------------------------------
+    @staticmethod
+    def path() -> Path:
+        return data_dir() / "config.json"
+
+    @classmethod
+    def load(cls) -> "Config":
+        p = cls.path()
+        if not p.exists():
+            return cls()
+        with p.open() as f:
+            raw = json.load(f)
+        return cls.from_dict(raw)
+
+    def save(self) -> None:
+        tmp = self.path().with_suffix(".tmp")
+        with tmp.open("w") as f:
+            json.dump(self.to_dict(), f, indent=2)
+        tmp.replace(self.path())
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "Config":
+        cfg = cls()
+        for section in fields(cls):
+            sub = getattr(cfg, section.name)
+            for k, v in (raw.get(section.name) or {}).items():
+                if hasattr(sub, k):
+                    setattr(sub, k, _coerce(getattr(sub, k), v))
+        return cfg
+
+    def update(self, patch: dict[str, Any]) -> None:
+        """Apply a partial nested dict (as sent by the UI)."""
+        merged = self.to_dict()
+        for section, values in patch.items():
+            if section in merged and isinstance(values, dict):
+                merged[section].update(values)
+        new = self.from_dict(merged)
+        for section in fields(self):
+            setattr(self, section.name, getattr(new, section.name))
+
+
+def _coerce(current: Any, value: Any) -> Any:
+    """Coerce UI strings to the type of the default value."""
+    if isinstance(current, bool):
+        if isinstance(value, str):
+            return value.lower() in ("1", "true", "yes", "on")
+        return bool(value)
+    if isinstance(current, int) and not isinstance(current, bool):
+        return int(float(value))
+    if isinstance(current, float):
+        return float(value)
+    return value

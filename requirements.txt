@@ -1,0 +1,6 @@
+web3>=7,<8
+eth-account>=0.13
+eth-abi>=5
+fastapi>=0.110
+uvicorn[standard]>=0.29
+requests>=2.31

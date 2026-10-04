@@ -1,0 +1,12 @@
+# Local state: never commit wallet or config
+data/
+*.keystore.json
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.env
+tests/.tmpdata/

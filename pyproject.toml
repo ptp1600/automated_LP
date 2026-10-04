@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lp-hedger"
+version = "0.1.0"
+description = "Automated Uniswap v3 ETH/USD liquidity provision hedged with Derive on-chain put options"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "web3>=7,<8",
+  "eth-account>=0.13",
+  "eth-abi>=5",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx2", "derive_action_signing>=0.0.13"]
+
+[project.scripts]
+lp-hedger = "lp_hedger.server:main"
+
+[tool.setuptools]
+packages = ["lp_hedger"]
+
+[tool.setuptools.package-data]
+lp_hedger = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
